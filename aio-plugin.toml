@@ -1,0 +1,11 @@
+[plugin.client]
+path = "client"
+
+[plugin.server]
+path = "server"
+
+[plugin.marketplace]
+title = "文件管理"
+summary = "按租户隔离的文件上传、列表、下载与安全删除。"
+license = "MIT"
+tags = ["system", "files", "storage"]

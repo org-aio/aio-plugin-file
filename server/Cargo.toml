@@ -1,0 +1,27 @@
+[package]
+name = "aio-plugin-file-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aio-plugin-file-model = { path = "../model" }
+aio-plugin-identity-server = { git = "https://github.com/zjarlin/aio-plugin-identity.git", rev = "d689b45e9a2070721d953747e361f6fb7035f61f" }
+anyhow = "1.0.99"
+async-trait = "0.1.89"
+axum = "0.8.6"
+dill = "0.15.0"
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.10.9"
+sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "sync"] }
+uuid = { version = "1.18.1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.21.0"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
