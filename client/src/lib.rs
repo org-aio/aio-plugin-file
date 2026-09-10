@@ -32,7 +32,7 @@ impl ApplicationPlugin for FilePlugin {
                     icon: Some("folder".to_owned()),
                 },
             ],
-            required_permission: Some("rbac:manage"),
+            required_permission: Some("file:manage"),
             render: page::FileManagementPage,
         }]
     }

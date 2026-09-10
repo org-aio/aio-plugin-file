@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 aio-plugin-file-model = { path = "../model" }
-aio-plugin-identity-server = { git = "https://github.com/zjarlin/aio-plugin-identity.git", rev = "d689b45e9a2070721d953747e361f6fb7035f61f" }
+aio-plugin-identity-server = { git = "https://github.com/zjarlin/aio-plugin-identity.git", rev = "e04457b7b1ebb0334f39351fbffb40fafcca81b1" }
 anyhow = "1.0.99"
 async-trait = "0.1.89"
 axum = "0.8.6"

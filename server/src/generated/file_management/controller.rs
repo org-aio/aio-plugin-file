@@ -54,7 +54,7 @@ impl FileController {
         if !session
             .permissions
             .iter()
-            .any(|permission| matches!(permission.as_str(), "file:manage" | "rbac:manage"))
+            .any(|permission| permission == "file:manage")
         {
             return Err(FileHttpError::forbidden("当前角色没有文件管理权限"));
         }

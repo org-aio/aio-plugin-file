@@ -21,7 +21,7 @@
 | `DELETE` | `/api/files/{id}` | 删除当前租户文件 |
 | `GET` | `/api/plugins/file/health` | 初始化存储并返回健康状态 |
 
-页面与 API 当前要求 `rbac:manage` 或专用的 `file:manage` 权限。页面仍使用 `rbac:manage` 作为壳层可见性条件，便于现有租户管理员直接使用。
+页面与 API 均要求专用的 `file:manage` 权限，文件能力不与 RBAC 管理权限耦合。
 
 ## 验证
 
