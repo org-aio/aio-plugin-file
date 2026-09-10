@@ -160,4 +160,14 @@ mod tests {
         assert!(value.contains("%E5%AD%A3%E5%BA%A6%20"));
         assert!(!value.contains('\n'));
     }
+
+    #[test]
+    fn rejects_unsafe_content_types() {
+        assert!(validate_content_type("text/plain\r\nx-test: yes").is_err());
+        assert!(validate_content_type("not-a-media-type").is_err());
+        assert_eq!(
+            validate_content_type("").unwrap(),
+            "application/octet-stream"
+        );
+    }
 }

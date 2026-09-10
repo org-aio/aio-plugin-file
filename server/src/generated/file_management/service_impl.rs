@@ -357,6 +357,18 @@ mod tests {
         let suffix = Uuid::new_v4();
         let tenant_a = format!("file-test-a-{suffix}");
         let tenant_b = format!("file-test-b-{suffix}");
+        let oversized = service
+            .upload(UploadCommand {
+                tenant_id: tenant_a.clone(),
+                user_id: "test-user".to_owned(),
+                filename: "large.bin".to_owned(),
+                content_type: "application/octet-stream".to_owned(),
+                body: Bytes::from(vec![0_u8; 1025]),
+            })
+            .await
+            .unwrap_err();
+        assert!(oversized.to_string().contains("1024"));
+        assert!(service.list(&tenant_a).await?.is_empty());
         let uploaded = service
             .upload(UploadCommand {
                 tenant_id: tenant_a.clone(),
@@ -386,6 +398,19 @@ mod tests {
             .await?
             .context("当前租户应能下载文件")?;
         assert_eq!(downloaded.body.as_ref(), b"hello tenant");
+        let content_path =
+            service.path_for(&tenant_a, &uploaded.id, &storage_name(&uploaded.id)?)?;
+        fs::write(&content_path, b"tampered data").await?;
+        assert!(
+            service
+                .download(FileQuery {
+                    tenant_id: tenant_a.clone(),
+                    file_id: uploaded.id.clone(),
+                })
+                .await
+                .is_err()
+        );
+        fs::write(&content_path, b"hello tenant").await?;
         assert!(
             !service
                 .delete(FileQuery {
