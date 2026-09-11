@@ -1,6 +1,8 @@
-mod delete_dialog;
+mod details;
+mod display;
 mod http;
 mod page;
+mod upload_dialog;
 
 use az_dioxus_admin_shell::{
     ApplicationMenuGroup, ApplicationPage, ApplicationPlugin, ApplicationScene,

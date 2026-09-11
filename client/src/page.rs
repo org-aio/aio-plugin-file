@@ -1,13 +1,21 @@
+use crate::{
+    details::FileDetails,
+    display::{category, format_bytes},
+    http,
+    upload_dialog::UploadFileDialog,
+};
 use aio_plugin_file_model::FileItem;
 use az_ui_components::{
+    admin::{
+        AsyncResult, CollectionTable, DeleteRecordsDialog, PageHeader, PageSurface, RequestState,
+        SortValue, StatusMessage,
+    },
     button::{Button, ButtonSize, ButtonVariant},
-    data_table::{DataTable, DataTableCellContext, DataTableColumn},
-    input::Input,
+    data_table::{DataTableAlign, DataTableCellContext, DataTableColumn},
+    select::{Select, SelectItem},
 };
-use dioxus::prelude::{dioxus_elements::FileData, *};
-use dioxus_icons::lucide::{Download, Trash2, Upload};
-
-use crate::{delete_dialog::DeleteFileDialog, http};
+use dioxus::prelude::*;
+use dioxus_icons::lucide::{Download, File, RefreshCw, Trash2, Upload};
 
 #[allow(non_snake_case)]
 pub fn FileManagementPage() -> Element {
@@ -16,184 +24,99 @@ pub fn FileManagementPage() -> Element {
         let _ = revision();
         http::list()
     });
-    let mut selected = use_signal(|| None::<FileData>);
     let mut uploading = use_signal(|| false);
     let mut status = use_signal(|| None::<Result<String, String>>);
-    let mut delete_target = use_signal(|| None::<FileItem>);
-
-    let listing = match files.read().as_ref().cloned() {
-        Some(Ok(listing)) => listing,
-        Some(Err(error)) => {
-            return rsx! { p { role: "alert", "加载文件列表失败：{error}" } };
-        }
-        None => return rsx! { p { "正在读取文件列表" } },
-    };
-    let selected_label = selected()
-        .map(|file| format!("{} · {}", file.name(), format_bytes(file.size())))
-        .unwrap_or_else(|| "尚未选择文件".to_owned());
-    let maximum_label = format_bytes(listing.max_file_bytes);
-    let max_file_bytes = listing.max_file_bytes;
-    let input_key = format!("upload-{}", revision());
-
+    let mut selected = use_signal(Vec::<FileItem>::new);
+    let mut delete_target = use_signal(|| None::<Vec<FileItem>>);
+    let mut detail_target = use_signal(|| None::<FileItem>);
+    let mut file_type = use_signal(|| "all".to_owned());
+    let result = files.read().as_ref().cloned();
+    let listing = result.as_ref().and_then(|result| result.as_ref().ok());
+    let count = listing.map_or(0, |listing| listing.files.len());
+    let bytes = listing.map_or(0, |listing| {
+        listing.files.iter().map(|file| file.size_bytes).sum()
+    });
+    let maximum = listing.map_or(0, |listing| listing.max_file_bytes);
     rsx! {
-        section {
-            div { class: "flex items-center justify-between gap-3",
-                div {
-                    h2 { "文件管理" }
-                    p { "上传、下载和删除当前租户的文件。" }
-                }
+        PageSurface {
+            PageHeader { title: "文件管理", detail: format!("{count} 个文件 · {}", format_bytes(bytes)),
+                Button { size: ButtonSize::Icon, variant: ButtonVariant::Outline, aria_label: "刷新文件", title: "刷新文件", onclick: move |_| revision += 1, RefreshCw {} }
+                Button { disabled: listing.is_none(), onclick: move |_| uploading.set(true), Upload {} "上传文件" }
             }
-            fieldset { class: "grid gap-3",
-                legend { "上传文件" }
-                Input {
-                    key: "{input_key}",
-                    r#type: "file",
-                    aria_label: "选择上传文件",
-                    disabled: uploading(),
-                    onchange: move |event: FormEvent| {
-                        selected.set(event.files().into_iter().next());
-                        status.set(None);
-                    },
-                }
-                p { "{selected_label}" }
-                p { "单个文件最大 {maximum_label}。" }
-                Button {
-                    r#type: "button",
-                    disabled: uploading() || selected().is_none(),
-                    onclick: move |_| {
-                        let Some(file) = selected() else {
-                            return;
-                        };
-                        if file.size() > max_file_bytes {
-                            status.set(Some(Err(format!(
-                                "文件超过 {} 限制",
-                                format_bytes(max_file_bytes),
-                            ))));
-                            return;
-                        }
-                        uploading.set(true);
-                        status.set(None);
-                        spawn(async move {
-                            let result = match file.read_bytes().await {
-                                Ok(bytes) => http::upload(
-                                    &file.name(),
-                                    file.content_type().as_deref(),
-                                    bytes.as_ref(),
-                                )
-                                .await
-                                .map(|item| format!("已上传 {}", item.name)),
-                                Err(error) => Err(format!("读取本地文件失败：{error}")),
-                            };
-                            uploading.set(false);
-                            if result.is_ok() {
-                                selected.set(None);
-                                revision.set(revision().wrapping_add(1));
-                            }
-                            status.set(Some(result));
-                        });
-                    },
-                    Upload { class: "size-4" }
-                    if uploading() { "正在上传" } else { "上传" }
-                }
-                if let Some(result) = status() {
-                    match result {
-                        Ok(message) => rsx! { p { role: "status", "{message}" } },
-                        Err(message) => rsx! { p { role: "alert", "{message}" } },
-                    }
-                }
-            }
-            h3 { "当前租户文件" }
-            DataTable {
-                aria_label: "当前租户文件",
-                rows: listing.files,
-                columns: columns(),
-                row_key: Callback::new(|file: FileItem| file.id),
-                empty_text: "当前租户还没有文件".to_owned(),
-                render_cell: Callback::new(move |cell: DataTableCellContext<FileItem>| {
-                    match cell.column.key.as_str() {
-                        "name" => rsx! { span { "{cell.row.name}" } },
-                        "type" => rsx! { span { "{cell.row.content_type}" } },
-                        "size" => rsx! { span { "{format_bytes(cell.row.size_bytes)}" } },
-                        "created" => rsx! { span { "{cell.row.created_at}" } },
-                        "actions" => {
-                            let download_id = cell.row.id.clone();
-                            let delete_file = cell.row.clone();
-                            rsx! {
-                                div { class: "flex items-center gap-1",
-                                    Button {
-                                        r#type: "button",
-                                        size: ButtonSize::IconSm,
-                                        variant: ButtonVariant::Ghost,
-                                        title: "下载 {cell.row.name}",
-                                        aria_label: "下载 {cell.row.name}",
-                                        onclick: move |_| {
-                                            if let Err(message) = http::download(&download_id) {
-                                                status.set(Some(Err(message)));
-                                            }
-                                        },
-                                        Download { class: "size-4" }
-                                    }
-                                    Button {
-                                        r#type: "button",
-                                        size: ButtonSize::IconSm,
-                                        variant: ButtonVariant::Ghost,
-                                        title: "删除 {cell.row.name}",
-                                        aria_label: "删除 {cell.row.name}",
-                                        onclick: move |_| delete_target.set(Some(delete_file.clone())),
-                                        Trash2 { class: "size-4" }
-                                    }
+            if let Some(message) = status() { StatusMessage { error: message.is_err(), message: message.unwrap_or_else(|message| message) } }
+            match result {
+                Some(Ok(listing)) => rsx! {
+                    CollectionTable {
+                        key: "{file_type}", label: "文件",
+                        rows: listing.files.into_iter().filter(|file| file_type() == "all" || category(&file.content_type) == file_type()).collect::<Vec<_>>(),
+                        columns: columns(), row_key: |file: FileItem| file.id,
+                        search_text: |file: FileItem| format!("{} {}", file.name, file.content_type),
+                        sort_value: |(file, key): (FileItem, String)| match key.as_str() {
+                            "size" => SortValue::Number(file.size_bytes.into()),
+                            "created" => SortValue::Text(file.created_at),
+                            _ => SortValue::Text(file.name.to_lowercase()),
+                        },
+                        sortable: vec!["name".into(), "size".into(), "created".into()],
+                        selected_keys: selected().iter().map(|file| file.id.clone()).collect::<std::collections::BTreeSet<_>>(),
+                        on_selection_change: move |value| selected.set(value), empty_text: "暂无文件".to_owned(),
+                        tools: rsx! {
+                            label { class: "admin-filter", "文件类型"
+                                Select { aria_label: "文件类型", value: file_type(),
+                                    options: [("all", "全部类型"), ("image", "图片"), ("document", "文档"), ("media", "音视频"), ("other", "其他")].into_iter().map(|(id, label)| SelectItem::new(id, label)).collect(),
+                                    on_value_change: move |value| { file_type.set(value); selected.set(Vec::new()); },
                                 }
                             }
+                            if !selected().is_empty() {
+                                Button { variant: ButtonVariant::Outline, onclick: move |_| delete_target.set(Some(selected())), Trash2 {} "删除选中 ({selected().len()})" }
+                            }
                         },
-                        _ => rsx! {},
+                        render_cell: move |cell: DataTableCellContext<FileItem>| match cell.column.key.as_str() {
+                            "name" => { let item = cell.row.clone(); rsx! { div { class: "admin-row-title", File {} button { r#type: "button", onclick: move |_| detail_target.set(Some(item.clone())), "{cell.row.name}" } } } },
+                            "type" => rsx! { span { class: "admin-meta", "{cell.row.content_type}" } },
+                            "size" => rsx! { "{format_bytes(cell.row.size_bytes)}" },
+                            "created" => rsx! { time { datetime: cell.row.created_at.clone(), "{cell.row.created_at}" } },
+                            "actions" => {
+                                let download_id = cell.row.id.clone();
+                                let item = cell.row.clone();
+                                rsx! { div { class: "admin-actions",
+                                    Button { size: ButtonSize::IconSm, variant: ButtonVariant::Ghost, title: "下载 {cell.row.name}", aria_label: "下载 {cell.row.name}",
+                                        onclick: move |_| { if let Err(message) = http::download(&download_id) { status.set(Some(Err(message))); } }, Download {} }
+                                    Button { size: ButtonSize::IconSm, variant: ButtonVariant::Ghost, title: "删除 {cell.row.name}", aria_label: "删除 {cell.row.name}",
+                                        onclick: move |_| delete_target.set(Some(vec![item.clone()])), Trash2 {} }
+                                } }
+                            },
+                            _ => rsx! {},
+                        },
                     }
-                }),
-            }
-        }
-        if let Some(file) = delete_target() {
-            DeleteFileDialog {
-                file,
-                on_close: move |_| delete_target.set(None),
-                on_deleted: move |_| {
-                    delete_target.set(None);
-                    status.set(Some(Ok("文件已删除".to_owned())));
-                    revision.set(revision().wrapping_add(1));
                 },
+                Some(Err(error)) => rsx! { RequestState { error, on_retry: move |_| revision += 1 } },
+                None => rsx! { RequestState {} },
             }
         }
+        if uploading() {
+            UploadFileDialog { max_file_bytes: maximum, on_close: move |_| uploading.set(false),
+                on_uploaded: move |file: FileItem| { uploading.set(false); status.set(Some(Ok(format!("已上传 {}", file.name)))); revision += 1; },
+            }
+        }
+        if let Some(files) = delete_target() {
+            DeleteRecordsDialog { title: "删除文件", items: files, item_label: |file: FileItem| file.name,
+                delete: |file: FileItem| -> AsyncResult<()> { Box::pin(async move { http::delete(&file.id).await }) },
+                on_close: move |_| delete_target.set(None),
+                on_deleted: move |count| { selected.set(Vec::new()); status.set(Some(Ok(format!("已删除 {count} 个文件")))); revision += 1; },
+            }
+        }
+        if let Some(file) = detail_target() { FileDetails { file, on_close: move |_| detail_target.set(None) } }
     }
 }
 
 fn columns() -> Vec<DataTableColumn> {
     vec![
-        DataTableColumn::leaf("name", "文件名").width(260),
+        DataTableColumn::leaf("name", "文件名").width(280),
         DataTableColumn::leaf("type", "类型").width(180),
-        DataTableColumn::leaf("size", "大小").width(110),
-        DataTableColumn::leaf("created", "上传时间").width(190),
+        DataTableColumn::leaf("size", "大小")
+            .width(110)
+            .align(DataTableAlign::End),
+        DataTableColumn::leaf("created", "上传时间").width(210),
         DataTableColumn::leaf("actions", "操作").width(100),
     ]
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = 1024 * KIB;
-    if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_bytes;
-
-    #[test]
-    fn formats_file_sizes_for_the_table() {
-        assert_eq!(format_bytes(7), "7 B");
-        assert_eq!(format_bytes(1536), "1.5 KiB");
-        assert_eq!(format_bytes(10 * 1024 * 1024), "10.0 MiB");
-    }
 }
