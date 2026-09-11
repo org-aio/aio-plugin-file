@@ -57,7 +57,7 @@ dependencies = [
 [[package]]
 name = "aio-plugin-identity-model"
 version = "0.1.0"
-source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=e04457b7b1ebb0334f39351fbffb40fafcca81b1#e04457b7b1ebb0334f39351fbffb40fafcca81b1"
+source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=fea3e38ec25a469d53028c6ca0f0acc58473a396#fea3e38ec25a469d53028c6ca0f0acc58473a396"
 dependencies = [
  "serde",
 ]
@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "aio-plugin-identity-server"
 version = "0.1.0"
-source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=e04457b7b1ebb0334f39351fbffb40fafcca81b1#e04457b7b1ebb0334f39351fbffb40fafcca81b1"
+source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=fea3e38ec25a469d53028c6ca0f0acc58473a396#fea3e38ec25a469d53028c6ca0f0acc58473a396"
 dependencies = [
  "aio-plugin-identity-model",
  "anyhow",
@@ -189,7 +189,7 @@ dependencies = [
 [[package]]
 name = "az-admin-shell-core"
 version = "2026.8.13"
-source = "git+https://github.com/zjarlin/dioxus-admin-workbench.git?rev=195765a263d2cbb837155e74dd531316994f48af#195765a263d2cbb837155e74dd531316994f48af"
+source = "git+https://github.com/zjarlin/dioxus-admin-workbench.git?rev=1bb367d499d119f4de88a2ed2e7b3acfcc088e6f#1bb367d499d119f4de88a2ed2e7b3acfcc088e6f"
 dependencies = [
  "anyhow",
  "convert_case",
@@ -204,7 +204,7 @@ dependencies = [
 [[package]]
 name = "az-dioxus-admin-shell"
 version = "2026.8.17"
-source = "git+https://github.com/zjarlin/dioxus-admin-workbench.git?rev=195765a263d2cbb837155e74dd531316994f48af#195765a263d2cbb837155e74dd531316994f48af"
+source = "git+https://github.com/zjarlin/dioxus-admin-workbench.git?rev=1bb367d499d119f4de88a2ed2e7b3acfcc088e6f#1bb367d499d119f4de88a2ed2e7b3acfcc088e6f"
 dependencies = [
  "anyhow",
  "az-admin-shell-core",
@@ -221,7 +221,7 @@ dependencies = [
 [[package]]
 name = "az-ui-components"
 version = "2026.8.17"
-source = "git+https://github.com/zjarlin/dioxus-admin-workbench.git?rev=195765a263d2cbb837155e74dd531316994f48af#195765a263d2cbb837155e74dd531316994f48af"
+source = "git+https://github.com/zjarlin/dioxus-admin-workbench.git?rev=1bb367d499d119f4de88a2ed2e7b3acfcc088e6f#1bb367d499d119f4de88a2ed2e7b3acfcc088e6f"
 dependencies = [
  "dioxus",
  "dioxus-icons",
