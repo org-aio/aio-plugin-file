@@ -57,7 +57,7 @@ dependencies = [
 [[package]]
 name = "aio-plugin-identity-model"
 version = "0.1.0"
-source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=fea3e38ec25a469d53028c6ca0f0acc58473a396#fea3e38ec25a469d53028c6ca0f0acc58473a396"
+source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=340b5f2f3956100a32ecbbdcee5cccb6dc84c9dd#340b5f2f3956100a32ecbbdcee5cccb6dc84c9dd"
 dependencies = [
  "serde",
 ]
@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "aio-plugin-identity-server"
 version = "0.1.0"
-source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=fea3e38ec25a469d53028c6ca0f0acc58473a396#fea3e38ec25a469d53028c6ca0f0acc58473a396"
+source = "git+https://github.com/zjarlin/aio-plugin-identity.git?rev=340b5f2f3956100a32ecbbdcee5cccb6dc84c9dd#340b5f2f3956100a32ecbbdcee5cccb6dc84c9dd"
 dependencies = [
  "aio-plugin-identity-model",
  "anyhow",
