@@ -1,6 +1,7 @@
 use crate::{
+    clipboard,
     details::FileDetails,
-    display::{category, format_bytes},
+    display::{category, format_bytes, image_link},
     http,
     upload_dialog::UploadFileDialog,
 };
@@ -15,7 +16,7 @@ use az_ui_components::{
     select::{Select, SelectItem},
 };
 use dioxus::prelude::*;
-use dioxus_icons::lucide::{Download, File, RefreshCw, Trash2, Upload};
+use dioxus_icons::lucide::{Copy, Download, File, RefreshCw, Trash2, Upload};
 
 #[allow(non_snake_case)]
 pub fn FileManagementPage() -> Element {
@@ -78,7 +79,18 @@ pub fn FileManagementPage() -> Element {
                             "actions" => {
                                 let download_id = cell.row.id.clone();
                                 let item = cell.row.clone();
+                                let copy_link = image_link(&cell.row).map(|link| link.markdown);
+                                let copy_name = cell.row.name.clone();
                                 rsx! { div { class: "admin-actions",
+                                    if let Some(link) = copy_link {
+                                        Button { size: ButtonSize::IconSm, variant: ButtonVariant::Ghost, title: "复制图床链接 {cell.row.name}", aria_label: "复制图床链接 {cell.row.name}",
+                                            onclick: move |_| { let link = link.clone(); let copy_name = copy_name.clone(); spawn(async move {
+                                                match clipboard::write_text(link).await {
+                                                    Ok(()) => status.set(Some(Ok(format!("已复制图床链接：{copy_name}")))),
+                                                    Err(message) => status.set(Some(Err(message))),
+                                                }
+                                            }); }, Copy {} }
+                                    }
                                     Button { size: ButtonSize::IconSm, variant: ButtonVariant::Ghost, title: "下载 {cell.row.name}", aria_label: "下载 {cell.row.name}",
                                         onclick: move |_| { if let Err(message) = http::download(&download_id) { status.set(Some(Err(message))); } }, Download {} }
                                     Button { size: ButtonSize::IconSm, variant: ButtonVariant::Ghost, title: "删除 {cell.row.name}", aria_label: "删除 {cell.row.name}",
@@ -117,6 +129,6 @@ fn columns() -> Vec<DataTableColumn> {
             .width(110)
             .align(DataTableAlign::End),
         DataTableColumn::leaf("created", "上传时间").width(210),
-        DataTableColumn::leaf("actions", "操作").width(100),
+        DataTableColumn::leaf("actions", "操作").width(140),
     ]
 }

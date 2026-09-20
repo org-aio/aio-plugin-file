@@ -13,11 +13,11 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-    model::{DownloadObject, FileQuery, StoredFile, UploadCommand},
+    model::{DownloadObject, FileQuery, ImageQuery, StoredFile, UploadCommand},
     service::FileService,
     util::{
-        FileStorageConfig, storage_name, tenant_bucket, validate_content_type, validate_filename,
-        validation,
+        FileStorageConfig, is_image_content_type, new_image_token, storage_name, tenant_bucket,
+        validate_content_type, validate_filename, validate_image_token, validation,
     },
 };
 
@@ -31,14 +31,34 @@ CREATE TABLE IF NOT EXISTS file_objects (
     sha256 TEXT NOT NULL,
     storage_name TEXT NOT NULL,
     uploaded_by TEXT NOT NULL,
+    image_token TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, storage_name)
 );
+ALTER TABLE file_objects ADD COLUMN IF NOT EXISTS image_token TEXT;
 CREATE INDEX IF NOT EXISTS file_objects_tenant_created_idx
     ON file_objects (tenant_id, created_at DESC, id);
+CREATE UNIQUE INDEX IF NOT EXISTS file_objects_image_token_idx
+    ON file_objects (image_token) WHERE image_token IS NOT NULL;
 "#;
 
-type StoredRow = (String, String, String, i64, String, String, String, String);
+type StoredRow = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+);
+
+/// 图床列表与详情共用的列顺序。
+const STORED_COLUMNS: &str = r#"tenant_id, id, original_name, content_type, size_bytes, sha256, uploaded_by,
+                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                      image_token, storage_name"#;
 
 #[derive(Debug)]
 pub(super) struct FileServiceImpl {
@@ -108,18 +128,24 @@ impl FileServiceImpl {
     }
 
     async fn find(&self, tenant_id: &str, file_id: &str) -> Result<Option<StoredFile>> {
-        let row = sqlx::query_as::<_, StoredRow>(
-            r#"SELECT id, original_name, content_type, size_bytes, sha256, uploaded_by,
-                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-                      storage_name
-               FROM file_objects
-               WHERE tenant_id = $1 AND id = $2"#,
-        )
-        .bind(tenant_id)
-        .bind(file_id)
-        .fetch_optional(&self.pool)
-        .await
-        .context("读取文件元数据失败")?;
+        let sql =
+            format!("SELECT {STORED_COLUMNS} FROM file_objects WHERE tenant_id = $1 AND id = $2");
+        let row = sqlx::query_as::<_, StoredRow>(&sql)
+            .bind(tenant_id)
+            .bind(file_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("读取文件元数据失败")?;
+        row.map(stored_from_row).transpose()
+    }
+
+    async fn find_by_image_token(&self, token: &str) -> Result<Option<StoredFile>> {
+        let sql = format!("SELECT {STORED_COLUMNS} FROM file_objects WHERE image_token = $1");
+        let row = sqlx::query_as::<_, StoredRow>(&sql)
+            .bind(token)
+            .fetch_optional(&self.pool)
+            .await
+            .context("读取图床图片元数据失败")?;
         row.map(stored_from_row).transpose()
     }
 
@@ -182,18 +208,16 @@ impl FileService for FileServiceImpl {
 
     async fn list(&self, tenant_id: &str) -> Result<Vec<FileItem>> {
         self.ensure_initialized().await?;
-        let rows = sqlx::query_as::<_, StoredRow>(
-            r#"SELECT id, original_name, content_type, size_bytes, sha256, uploaded_by,
-                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-                      storage_name
-               FROM file_objects
-               WHERE tenant_id = $1
-               ORDER BY created_at DESC, id"#,
-        )
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
-        .await
-        .context("读取文件列表失败")?;
+        let sql = format!(
+            "SELECT {STORED_COLUMNS} FROM file_objects
+             WHERE tenant_id = $1
+             ORDER BY created_at DESC, id"
+        );
+        let rows = sqlx::query_as::<_, StoredRow>(&sql)
+            .bind(tenant_id)
+            .fetch_all(&self.pool)
+            .await
+            .context("读取文件列表失败")?;
         rows.into_iter()
             .map(stored_from_row)
             .map(|stored| stored.map(|stored| stored.item))
@@ -211,13 +235,15 @@ impl FileService for FileServiceImpl {
         let persisted_name = storage_name(&file_id)?;
         let size_bytes = i64::try_from(command.body.len()).context("文件大小超出数据库范围")?;
         let digest = format!("{:x}", Sha256::digest(&command.body));
+        // 只有图片才生成公开图床令牌；其他文件不进入公开地址空间。
+        let image_token = is_image_content_type(&content_type).then(new_image_token);
         let path = self
             .write_content(&command.tenant_id, &file_id, &command.body)
             .await?;
         let inserted = sqlx::query_scalar::<_, String>(
             r#"INSERT INTO file_objects
-                   (id, tenant_id, original_name, content_type, size_bytes, sha256, storage_name, uploaded_by)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   (id, tenant_id, original_name, content_type, size_bytes, sha256, storage_name, uploaded_by, image_token)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')"#,
         )
         .bind(&file_id)
@@ -228,6 +254,7 @@ impl FileService for FileServiceImpl {
         .bind(&digest)
         .bind(&persisted_name)
         .bind(&command.user_id)
+        .bind(&image_token)
         .fetch_one(&self.pool)
         .await;
         let created_at = match inserted {
@@ -245,6 +272,7 @@ impl FileService for FileServiceImpl {
             sha256: digest,
             uploaded_by: command.user_id,
             created_at,
+            image_token,
         })
     }
 
@@ -253,40 +281,32 @@ impl FileService for FileServiceImpl {
         let Some(stored) = self.find(&query.tenant_id, &query.file_id).await? else {
             return Ok(None);
         };
-        let path = self.path_for(&query.tenant_id, &stored.item.id, &stored.storage_name)?;
-        let body = fs::read(&path)
-            .await
-            .with_context(|| format!("读取文件内容失败: {}", path.display()))?;
-        ensure!(
-            body.len() as u64 == stored.item.size_bytes,
-            "文件内容长度与元数据不一致"
-        );
-        ensure!(
-            format!("{:x}", Sha256::digest(&body)) == stored.item.sha256,
-            "文件内容摘要与元数据不一致"
-        );
-        Ok(Some(DownloadObject {
-            item: stored.item,
-            body: Bytes::from(body),
-        }))
+        self.read_stored(stored).await.map(Some)
+    }
+
+    async fn open_image(&self, query: ImageQuery) -> Result<Option<DownloadObject>> {
+        self.ensure_initialized().await?;
+        let token = validate_image_token(&query.token)?;
+        let Some(stored) = self.find_by_image_token(&token).await? else {
+            return Ok(None);
+        };
+        self.read_stored(stored).await.map(Some)
     }
 
     async fn delete(&self, query: FileQuery) -> Result<bool> {
         self.ensure_initialized().await?;
         let mut transaction = self.pool.begin().await.context("开始删除事务失败")?;
-        let row = sqlx::query_as::<_, StoredRow>(
-            r#"SELECT id, original_name, content_type, size_bytes, sha256, uploaded_by,
-                      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-                      storage_name
-               FROM file_objects
-               WHERE tenant_id = $1 AND id = $2
-               FOR UPDATE"#,
-        )
-        .bind(&query.tenant_id)
-        .bind(&query.file_id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .context("锁定待删除文件失败")?;
+        let sql = format!(
+            "SELECT {STORED_COLUMNS} FROM file_objects
+             WHERE tenant_id = $1 AND id = $2
+             FOR UPDATE"
+        );
+        let row = sqlx::query_as::<_, StoredRow>(&sql)
+            .bind(&query.tenant_id)
+            .bind(&query.file_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .context("锁定待删除文件失败")?;
         let Some(stored) = row.map(stored_from_row).transpose()? else {
             transaction.rollback().await?;
             return Ok(false);
@@ -320,9 +340,43 @@ impl FileService for FileServiceImpl {
     }
 }
 
+impl FileServiceImpl {
+    /// 读取并校验单个文件内容，供租户下载和公开图床共用。
+    async fn read_stored(&self, stored: StoredFile) -> Result<DownloadObject> {
+        let path = self.path_for(&stored.tenant_id, &stored.item.id, &stored.storage_name)?;
+        let body = fs::read(&path)
+            .await
+            .with_context(|| format!("读取文件内容失败: {}", path.display()))?;
+        ensure!(
+            body.len() as u64 == stored.item.size_bytes,
+            "文件内容长度与元数据不一致"
+        );
+        ensure!(
+            format!("{:x}", Sha256::digest(&body)) == stored.item.sha256,
+            "文件内容摘要与元数据不一致"
+        );
+        Ok(DownloadObject {
+            item: stored.item,
+            body: Bytes::from(body),
+        })
+    }
+}
+
 fn stored_from_row(row: StoredRow) -> Result<StoredFile> {
-    let (id, name, content_type, size_bytes, sha256, uploaded_by, created_at, storage_name) = row;
+    let (
+        tenant_id,
+        id,
+        name,
+        content_type,
+        size_bytes,
+        sha256,
+        uploaded_by,
+        created_at,
+        image_token,
+        storage_name,
+    ) = row;
     Ok(StoredFile {
+        tenant_id,
         item: FileItem {
             id,
             name,
@@ -331,6 +385,7 @@ fn stored_from_row(row: StoredRow) -> Result<StoredFile> {
             sha256,
             uploaded_by,
             created_at,
+            image_token,
         },
         storage_name,
     })
@@ -398,6 +453,36 @@ mod tests {
             .await?
             .context("当前租户应能下载文件")?;
         assert_eq!(downloaded.body.as_ref(), b"hello tenant");
+        assert!(uploaded.image_token.is_none(), "非图片不应生成图床令牌");
+
+        // 图床令牌只对图片生成，并可通过公开地址在无租户上下文时读取。
+        let image = service
+            .upload(UploadCommand {
+                tenant_id: tenant_a.clone(),
+                user_id: "test-user".to_owned(),
+                filename: "cover.png".to_owned(),
+                content_type: "image/png".to_owned(),
+                body: Bytes::from_static(b"\x89PNG\r\n\x1a\n"),
+            })
+            .await?;
+        let token = image.image_token.clone().context("图片应生成图床令牌")?;
+        let public = service
+            .open_image(ImageQuery {
+                token: token.clone(),
+            })
+            .await?
+            .context("图床令牌应能读取图片")?;
+        assert_eq!(public.body.as_ref(), b"\x89PNG\r\n\x1a\n");
+        assert!(
+            service
+                .open_image(ImageQuery {
+                    token: "f".repeat(64),
+                })
+                .await?
+                .is_none(),
+            "未知令牌不应返回图片"
+        );
+
         let content_path =
             service.path_for(&tenant_a, &uploaded.id, &storage_name(&uploaded.id)?)?;
         fs::write(&content_path, b"tampered data").await?;
@@ -423,7 +508,19 @@ mod tests {
             service
                 .delete(FileQuery {
                     tenant_id: tenant_a.clone(),
-                    file_id: uploaded.id,
+                    file_id: uploaded.id.clone(),
+                })
+                .await?
+        );
+        assert!(
+            service.open_image(ImageQuery { token }).await?.is_some(),
+            "删除其他文件不应影响图床图片"
+        );
+        assert!(
+            service
+                .delete(FileQuery {
+                    tenant_id: tenant_a.clone(),
+                    file_id: image.id,
                 })
                 .await?
         );

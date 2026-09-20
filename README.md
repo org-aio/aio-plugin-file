@@ -12,6 +12,8 @@ File management plugs into the “系统” (System) scenario of AIO IDEA as an 
 - `AIO_FILE_MAX_BYTES` 控制单文件上限，默认 10 MiB。
 - 文件上传先写同目录临时文件并同步，再原子切换；数据库保存失败时清理内容文件。
 - 删除先把内容移入同租户隔离的回收文件，再提交元数据事务；事务失败会恢复内容。
+- 图片上传时额外生成 64 位十六进制随机 `image_token`，通过公开地址 `/i/{token}` 访问；令牌不包含文件 ID、租户或文件名，删除文件后立即失效。
+- 图床地址以 `inline` 返回并按令牌长期缓存，非图片文件不生成令牌、不进入公开地址空间。
 
 - The PostgreSQL table `file_objects` is the authoritative persistence source for file metadata.
 - File contents are written to the host-configured `AIO_FILE_STORAGE_DIR`; the directory uses only tenant hashes and random object IDs, never user-supplied filenames.
@@ -19,6 +21,8 @@ File management plugs into the “系统” (System) scenario of AIO IDEA as an 
 - `AIO_FILE_MAX_BYTES` caps the per-file size, defaulting to 10 MiB.
 - Uploads first write a temp file in the same directory and sync it, then switch atomically; a failed database save cleans up the content file.
 - Deletion first moves content into a tenant-isolated recycle file, then commits the metadata transaction; a failed transaction restores the content.
+- Image uploads also mint a 64-hex random `image_token` reachable at the public path `/i/{token}`; the token leaks no file ID, tenant, or filename and stops working once the file is deleted.
+- Public image responses use `inline` disposition and long-lived token-scoped caching; non-image files never receive a token and never enter the public address space.
 
 ## API
 
@@ -29,10 +33,13 @@ File management plugs into the “系统” (System) scenario of AIO IDEA as an 
 | `GET` | `/api/files/{id}` | 下载当前租户文件 / Download a file of the current tenant |
 | `DELETE` | `/api/files/{id}` | 删除当前租户文件 / Delete a file of the current tenant |
 | `GET` | `/api/plugins/file/health` | 初始化存储并返回健康状态 / Initialize storage and return health |
+| `GET` | `/i/{token}` | 公开图床地址（仅图片，无需会话）/ Public image host address (images only, no session) |
 
 页面与 API 均要求专用的 `file:manage` 权限，文件能力不与 RBAC 管理权限耦合。
+`/i/{token}` 是唯一无需会话的文件路径，只接受图片上传时生成的随机令牌；列表、上传、下载和删除仍按租户隔离。
 
 Both the page and the API require the dedicated `file:manage` permission; file capabilities are not coupled to RBAC admin permissions.
+`/i/{token}` is the only session-free file path. It accepts only the random token minted for an image upload; listing, upload, download and delete stay tenant-isolated.
 
 ## 验证 / Verification
 

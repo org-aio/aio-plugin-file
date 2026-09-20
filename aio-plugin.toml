@@ -6,6 +6,6 @@ path = "server"
 
 [plugin.marketplace]
 title = "文件管理"
-summary = "按租户隔离的文件上传、列表、下载与安全删除。"
+summary = "按租户隔离的文件上传、列表、下载、安全删除与图片图床外链。"
 license = "MIT"
-tags = ["system", "files", "storage"]
+tags = ["system", "files", "storage", "image-host"]

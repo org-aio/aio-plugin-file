@@ -93,6 +93,22 @@ pub(super) fn tenant_bucket(tenant_id: &str) -> String {
     format!("{:x}", Sha256::digest(tenant_id.as_bytes()))
 }
 
+/// 图床令牌使用独立随机值，避免公开地址暴露文件 ID 或租户信息。
+pub(super) fn new_image_token() -> String {
+    format!("{:x}", Sha256::digest(Uuid::new_v4().as_bytes()))
+}
+
+pub(super) fn validate_image_token(value: &str) -> Result<String> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return validation("图床令牌无效");
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+pub(super) fn is_image_content_type(content_type: &str) -> bool {
+    content_type.starts_with("image/")
+}
+
 pub(super) fn storage_name(file_id: &str) -> Result<String> {
     let id = Uuid::parse_str(file_id)
         .map_err(|_| FileDomainError::Validation("文件 ID 无效".to_owned()))?;
@@ -100,6 +116,15 @@ pub(super) fn storage_name(file_id: &str) -> Result<String> {
 }
 
 pub(super) fn content_disposition(filename: &str) -> String {
+    format!("attachment; {}", encoded_filename(filename))
+}
+
+/// 图床公开地址使用 inline，浏览器可直接渲染图片而不是触发下载。
+pub(super) fn inline_disposition(filename: &str) -> String {
+    format!("inline; {}", encoded_filename(filename))
+}
+
+fn encoded_filename(filename: &str) -> String {
     let encoded = filename
         .as_bytes()
         .iter()
@@ -126,7 +151,7 @@ pub(super) fn content_disposition(filename: &str) -> String {
             }
         })
         .collect::<String>();
-    format!("attachment; filename=\"download\"; filename*=UTF-8''{encoded}")
+    format!("filename=\"download\"; filename*=UTF-8''{encoded}")
 }
 
 pub(super) fn validation<T>(message: impl Into<String>) -> Result<T> {
@@ -169,5 +194,27 @@ mod tests {
             validate_content_type("").unwrap(),
             "application/octet-stream"
         );
+    }
+
+    #[test]
+    fn recognizes_only_images_for_public_tokens() {
+        assert!(is_image_content_type("image/png"));
+        assert!(is_image_content_type("image/svg+xml"));
+        assert!(!is_image_content_type("application/pdf"));
+        assert!(!is_image_content_type("text/plain"));
+    }
+
+    #[test]
+    fn validates_public_image_tokens() {
+        let token = new_image_token();
+        assert_eq!(token.len(), 64);
+        assert_eq!(validate_image_token(&token).unwrap(), token);
+        assert_eq!(
+            validate_image_token(&token.to_ascii_uppercase()).unwrap(),
+            token
+        );
+        assert!(validate_image_token("short").is_err());
+        assert!(validate_image_token(&"z".repeat(64)).is_err());
+        assert!(validate_image_token(&"0".repeat(63)).is_err());
     }
 }

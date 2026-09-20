@@ -16,9 +16,9 @@ use axum::{
 use serde::Deserialize;
 
 use super::{
-    model::{FileQuery, UploadCommand},
+    model::{DownloadObject, FileQuery, ImageQuery, UploadCommand},
     service::FileService,
-    util::{FileDomainError, content_disposition},
+    util::{FileDomainError, content_disposition, inline_disposition},
 };
 
 const NOSNIFF: axum::http::HeaderName =
@@ -38,6 +38,8 @@ impl FileController {
             .route("/api/plugins/file/health", get(health))
             .route("/api/files", get(list).post(upload))
             .route("/api/files/{id}", get(download).delete(delete_file))
+            // 公开图床地址：只凭随机令牌访问，不携带会话，供站外引用。
+            .route("/i/{token}", get(public_image))
             .layer(DefaultBodyLimit::max(max_file_bytes))
             .with_state(self)
     }
@@ -131,6 +133,28 @@ async fn download(
     else {
         return Err(FileHttpError::not_found("文件不存在"));
     };
+    file_response(file, FileDisposition::Attachment)
+}
+
+async fn public_image(
+    State(controller): State<Arc<FileController>>,
+    Path(token): Path<String>,
+) -> Result<Response, FileHttpError> {
+    let Some(file) = controller.service.open_image(ImageQuery { token }).await? else {
+        return Err(FileHttpError::not_found("图片不存在"));
+    };
+    file_response(file, FileDisposition::Inline)
+}
+
+enum FileDisposition {
+    Attachment,
+    Inline,
+}
+
+fn file_response(
+    file: DownloadObject,
+    disposition: FileDisposition,
+) -> Result<Response, FileHttpError> {
     let mut response = Response::new(Body::from(file.body));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
@@ -138,17 +162,29 @@ async fn download(
         CONTENT_TYPE,
         HeaderValue::from_str(&file.item.content_type).map_err(|_| FileHttpError::internal())?,
     );
+    let value = match disposition {
+        FileDisposition::Attachment => content_disposition(&file.item.name),
+        FileDisposition::Inline => inline_disposition(&file.item.name),
+    };
     headers.insert(
         CONTENT_DISPOSITION,
-        HeaderValue::from_str(&content_disposition(&file.item.name))
-            .map_err(|_| FileHttpError::internal())?,
+        HeaderValue::from_str(&value).map_err(|_| FileHttpError::internal())?,
     );
     headers.insert(
         CONTENT_LENGTH,
         HeaderValue::from_str(&file.item.size_bytes.to_string())
             .map_err(|_| FileHttpError::internal())?,
     );
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    headers.insert(
+        CACHE_CONTROL,
+        match disposition {
+            FileDisposition::Attachment => HeaderValue::from_static("private, no-store"),
+            // 公开图片按令牌长期缓存，内容寻址且删除后令牌失效。
+            FileDisposition::Inline => {
+                HeaderValue::from_static("public, max-age=31536000, immutable")
+            }
+        },
+    );
     headers.insert(NOSNIFF, HeaderValue::from_static("nosniff"));
     Ok(response)
 }

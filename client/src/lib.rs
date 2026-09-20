@@ -1,3 +1,4 @@
+mod clipboard;
 mod details;
 mod display;
 mod http;

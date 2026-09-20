@@ -14,12 +14,17 @@ pub struct FileQuery {
     pub file_id: String,
 }
 
+pub struct ImageQuery {
+    pub token: String,
+}
+
 pub struct DownloadObject {
     pub item: FileItem,
     pub body: Bytes,
 }
 
 pub(super) struct StoredFile {
+    pub tenant_id: String,
     pub item: FileItem,
     pub storage_name: String,
 }
