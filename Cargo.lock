@@ -56,10 +56,12 @@ dependencies = [
  "dill",
  "dioxus",
  "dioxus-icons",
+ "futures-channel",
  "gloo-net",
  "js-sys",
  "serde",
  "serde_json",
+ "wasm-bindgen",
  "web-sys",
 ]
 
