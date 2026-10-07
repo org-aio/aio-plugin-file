@@ -4,6 +4,7 @@ mod display;
 mod http;
 mod page;
 mod upload_dialog;
+mod view_state;
 
 use az_dioxus_admin_shell::{
     ApplicationMenuGroup, ApplicationPage, ApplicationPlugin, ApplicationScene,

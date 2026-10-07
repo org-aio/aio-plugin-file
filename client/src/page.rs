@@ -6,8 +6,10 @@ use crate::{
     display::{file_category, format_bytes, image_link},
     http,
     upload_dialog::UploadFileDialog,
+    view_state::{FileCategory, SortMode, use_file_view_state},
 };
 use aio_plugin_file_model::FileItem;
+use az_dioxus_admin_shell::UrlUpdate;
 use az_ui_components::{
     admin::{
         AsyncResult, DeleteRecordsDialog, PageHeader, PageSurface, RequestState, StatusMessage,
@@ -27,86 +29,10 @@ use dioxus_icons::lucide::{
 
 const PAGE_STYLES: &str = include_str!("page.css");
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FileCategory {
-    All,
-    Image,
-    Document,
-    Media,
-    Archive,
-    Application,
-    Code,
-    Database,
-    Other,
-}
-
-impl FileCategory {
-    const ALL: [Self; 9] = [
-        Self::All,
-        Self::Image,
-        Self::Document,
-        Self::Media,
-        Self::Archive,
-        Self::Application,
-        Self::Code,
-        Self::Database,
-        Self::Other,
-    ];
-
-    const fn key(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Image => "image",
-            Self::Document => "document",
-            Self::Media => "media",
-            Self::Archive => "archive",
-            Self::Application => "application",
-            Self::Code => "code",
-            Self::Database => "database",
-            Self::Other => "other",
-        }
-    }
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::All => "所有文件",
-            Self::Image => "图片",
-            Self::Document => "文档",
-            Self::Media => "音视频",
-            Self::Archive => "压缩包",
-            Self::Application => "安装包",
-            Self::Code => "代码/文本",
-            Self::Database => "数据库/备份",
-            Self::Other => "其他",
-        }
-    }
-
-    fn matches(self, file: &FileItem) -> bool {
-        self == Self::All || file_category(file) == self.key()
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct CategoryEntry {
     category: FileCategory,
     count: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SortMode {
-    Newest,
-    Name,
-    Largest,
-}
-
-impl SortMode {
-    fn from_value(value: &str) -> Self {
-        match value {
-            "name" => Self::Name,
-            "largest" => Self::Largest,
-            _ => Self::Newest,
-        }
-    }
 }
 
 #[allow(non_snake_case)]
@@ -124,9 +50,11 @@ pub fn FileManagementPage() -> Element {
     let mut active_file = use_signal(|| None::<FileItem>);
     let mut delete_target = use_signal(|| None::<Vec<FileItem>>);
     let mut detail_target = use_signal(|| None::<FileItem>);
-    let mut selected_category = use_signal(|| FileCategory::All);
-    let mut search = use_signal(String::new);
-    let mut sort_mode = use_signal(|| SortMode::Newest);
+    let view = use_file_view_state();
+    let url = view.url;
+    let selected_category = view.category;
+    let search = view.search;
+    let sort_mode = view.sort;
 
     let result = files.read().as_ref().cloned();
     let listing = result.as_ref().and_then(|result| result.as_ref().ok());
@@ -136,7 +64,7 @@ pub fn FileManagementPage() -> Element {
     });
     let maximum = listing.map_or(0, |listing| listing.max_file_bytes);
     let all_files = listing.map_or_else(Vec::new, |listing| listing.files.clone());
-    let visible_files = visible_files(&all_files, selected_category(), &search(), sort_mode());
+    let visible_files = visible_files(&all_files, selected_category, &search, sort_mode);
     let categories = category_entries(&all_files);
     let selected_files = selected_files(&all_files, &selected_ids());
     let delete_selection = if selected_files.is_empty() {
@@ -216,9 +144,9 @@ pub fn FileManagementPage() -> Element {
                                 class: "file-browser__categories".to_owned(),
                                 data: CollectionTreeData::Collection(categories),
                                 item_key: |entry: CategoryEntry| entry.category.key().to_owned(),
-                                selected_key: Some(selected_category().key().to_owned()),
+                                selected_key: Some(selected_category.key().to_owned()),
                                 on_select: move |entry: CategoryEntry| {
-                                    selected_category.set(entry.category);
+                                    url.update(&[("category", (entry.category != FileCategory::All).then(|| entry.category.key().to_owned()))], UrlUpdate::Push);
                                     selected_ids.set(BTreeSet::new());
                                     active_file.set(None);
                                 },
@@ -253,13 +181,16 @@ pub fn FileManagementPage() -> Element {
                                         r#type: "search",
                                         aria_label: "搜索文件",
                                         placeholder: "搜索名称或类型",
-                                        value: search(),
-                                        oninput: move |event: FormEvent| search.set(event.value()),
+                                        value: search.clone(),
+                                        oninput: move |event: FormEvent| {
+                                            let value = event.value();
+                                            url.update(&[("q", (!value.is_empty()).then_some(value))], UrlUpdate::Continuous);
+                                        },
                                     }
                                 }
                                 Select {
                                     aria_label: "文件排序",
-                                    value: match sort_mode() {
+                                    value: match sort_mode {
                                         SortMode::Newest => "newest",
                                         SortMode::Name => "name",
                                         SortMode::Largest => "largest",
@@ -269,12 +200,12 @@ pub fn FileManagementPage() -> Element {
                                         SelectItem::new("name", "按名称"),
                                         SelectItem::new("largest", "按大小"),
                                     ].to_vec(),
-                                    on_value_change: move |value: String| sort_mode.set(SortMode::from_value(&value)),
+                                    on_value_change: move |value: String| url.update(&[("sort", (value != "newest").then_some(value))], UrlUpdate::Push),
                                 }
                             }
                             div { class: "file-browser__list-heading",
                                 div {
-                                    strong { "{selected_category().label()}" }
+                                    strong { "{selected_category.label()}" }
                                     span { "{visible_count} 项" }
                                 }
                                 if selected_count > 0 {
@@ -298,11 +229,11 @@ pub fn FileManagementPage() -> Element {
                             }
                             if visible_files.is_empty() {
                                 FileEmptyState {
-                                    searching: !search().trim().is_empty(),
+                                    searching: !search.trim().is_empty(),
                                     on_upload: move |_| uploading.set(true),
                                 }
                             } else {
-                                div { class: "file-browser__list", role: "listbox", aria_label: "文件",
+                                div { class: "file-browser__list", role: "listbox", aria_label: "文件", "data-url-scroll": "files-list",
                                     for file in visible_files {
                                         FileRow {
                                             key: "{file.id}",
