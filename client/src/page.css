@@ -268,6 +268,10 @@
 .file-browser__file-icon[data-kind="image"] { color: var(--success); }
 .file-browser__file-icon[data-kind="document"] { color: var(--info); }
 .file-browser__file-icon[data-kind="media"] { color: var(--warning); }
+.file-browser__file-icon[data-kind="archive"] { color: var(--warning); }
+.file-browser__file-icon[data-kind="application"] { color: var(--success); }
+.file-browser__file-icon[data-kind="code"] { color: var(--info); }
+.file-browser__file-icon[data-kind="database"] { color: var(--primary-color); }
 
 .file-browser__file-icon svg {
   width: 1.125rem;

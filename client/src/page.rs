@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::{
     clipboard,
     details::FileDetails,
-    display::{category, format_bytes, image_link},
+    display::{file_category, format_bytes, image_link},
     http,
     upload_dialog::UploadFileDialog,
 };
@@ -21,8 +21,8 @@ use az_ui_components::{
 use dioxus::html::HasFileData as _;
 use dioxus::prelude::{dioxus_elements::FileData, *};
 use dioxus_icons::lucide::{
-    Copy, Download, File, FileImage, FileText, Files, Film, Folder, HardDrive, Image, Info,
-    Package, RefreshCw, Search, Trash2, Upload,
+    Archive, Copy, Database, Download, File, FileCode, FileImage, FileText, Files, Film, Folder,
+    HardDrive, Image, Info, Package, RefreshCw, Search, Trash2, Upload,
 };
 
 const PAGE_STYLES: &str = include_str!("page.css");
@@ -33,15 +33,23 @@ enum FileCategory {
     Image,
     Document,
     Media,
+    Archive,
+    Application,
+    Code,
+    Database,
     Other,
 }
 
 impl FileCategory {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 9] = [
         Self::All,
         Self::Image,
         Self::Document,
         Self::Media,
+        Self::Archive,
+        Self::Application,
+        Self::Code,
+        Self::Database,
         Self::Other,
     ];
 
@@ -51,6 +59,10 @@ impl FileCategory {
             Self::Image => "image",
             Self::Document => "document",
             Self::Media => "media",
+            Self::Archive => "archive",
+            Self::Application => "application",
+            Self::Code => "code",
+            Self::Database => "database",
             Self::Other => "other",
         }
     }
@@ -61,12 +73,16 @@ impl FileCategory {
             Self::Image => "图片",
             Self::Document => "文档",
             Self::Media => "音视频",
+            Self::Archive => "压缩包",
+            Self::Application => "安装包",
+            Self::Code => "代码/文本",
+            Self::Database => "数据库/备份",
             Self::Other => "其他",
         }
     }
 
     fn matches(self, file: &FileItem) -> bool {
-        self == Self::All || category(&file.content_type) == self.key()
+        self == Self::All || file_category(file) == self.key()
     }
 }
 
@@ -384,7 +400,11 @@ fn CategoryRow(entry: CategoryEntry) -> Element {
                     FileCategory::Image => rsx! { Image {} },
                     FileCategory::Document => rsx! { FileText {} },
                     FileCategory::Media => rsx! { Film {} },
-                    FileCategory::Other => rsx! { Package {} },
+                    FileCategory::Archive => rsx! { Archive {} },
+                    FileCategory::Application => rsx! { Package {} },
+                    FileCategory::Code => rsx! { FileCode {} },
+                    FileCategory::Database => rsx! { Database {} },
+                    FileCategory::Other => rsx! { File {} },
                 }
                 "{entry.category.label()}"
             }
@@ -418,8 +438,8 @@ fn FileRow(
                 r#type: "button",
                 class: "file-browser__row-main",
                 onclick: move |_| on_activate.call(file_for_open.clone()),
-                div { class: "file-browser__file-icon", "data-kind": category(&file.content_type),
-                    FileKindIcon { content_type: file.content_type.clone() }
+                div { class: "file-browser__file-icon", "data-kind": file_category(&file),
+                    FileKindIcon { file: file.clone() }
                 }
                 div { class: "file-browser__file-copy",
                     strong { title: "{file.name}", "{file.name}" }
@@ -435,12 +455,15 @@ fn FileRow(
 }
 
 #[component]
-fn FileKindIcon(content_type: String) -> Element {
-    match category(&content_type) {
+fn FileKindIcon(file: FileItem) -> Element {
+    match file_category(&file) {
         "image" => rsx! { FileImage {} },
         "document" => rsx! { FileText {} },
         "media" => rsx! { Film {} },
-        "other" => rsx! { Package {} },
+        "archive" => rsx! { Archive {} },
+        "application" => rsx! { Package {} },
+        "code" => rsx! { FileCode {} },
+        "database" => rsx! { Database {} },
         _ => rsx! { File {} },
     }
 }
@@ -473,7 +496,7 @@ fn FilePreview(
                 img { src: link.url, alt: "{file.name}" }
             } else {
                 div { class: "file-browser__preview-file",
-                    FileKindIcon { content_type: file.content_type.clone() }
+                    FileKindIcon { file: file.clone() }
                     span { "{file.content_type}" }
                 }
             }
@@ -728,6 +751,14 @@ mod tests {
         }
     }
 
+    fn entry(entries: &[CategoryEntry], category: FileCategory) -> usize {
+        entries
+            .iter()
+            .find(|entry| entry.category == category)
+            .map(|entry| entry.count)
+            .unwrap()
+    }
+
     #[test]
     fn category_entries_cover_all_files() {
         let files = vec![
@@ -735,9 +766,57 @@ mod tests {
             file("2", "guide.pdf", "application/pdf", 10, "2026-10-01"),
         ];
         let entries = category_entries(&files);
-        assert_eq!(entries[0].count, 2);
-        assert_eq!(entries[1].count, 1);
-        assert_eq!(entries[2].count, 1);
+        assert_eq!(entry(&entries, FileCategory::All), 2);
+        assert_eq!(entry(&entries, FileCategory::Image), 1);
+        assert_eq!(entry(&entries, FileCategory::Document), 1);
+        assert_eq!(entry(&entries, FileCategory::Archive), 0);
+    }
+
+    #[test]
+    fn extensions_drive_the_visible_categories() {
+        // 复现线上截图：apk 上报 x-www-form-urlencoded、sql 上报 octet-stream，
+        // 仍应分别归入「安装包」与「数据库/备份」而不是「其他」。
+        let files = vec![
+            file(
+                "1",
+                "千寻.apk",
+                "application/x-www-form-urlencoded",
+                8,
+                "2026-10-03",
+            ),
+            file(
+                "2",
+                "野草助手.apk",
+                "application/x-www-form-urlencoded",
+                9,
+                "2026-10-03",
+            ),
+            file(
+                "3",
+                "blinko_pg.sql",
+                "application/octet-stream",
+                5,
+                "2026-10-02",
+            ),
+            file(
+                "4",
+                "boxun_sit.sql",
+                "application/octet-stream",
+                6,
+                "2026-09-23",
+            ),
+        ];
+        let entries = category_entries(&files);
+        assert_eq!(entry(&entries, FileCategory::Other), 0);
+        assert_eq!(entry(&entries, FileCategory::Application), 2);
+        assert_eq!(entry(&entries, FileCategory::Database), 2);
+        let applications = visible_files(&files, FileCategory::Application, "", SortMode::Newest);
+        assert_eq!(applications.len(), 2);
+        assert!(
+            applications
+                .iter()
+                .all(|file| file_category(file) == "application")
+        );
     }
 
     #[test]

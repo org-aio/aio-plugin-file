@@ -37,7 +37,63 @@ fn image_link_for(token: &str, name: &str, origin: &str) -> ImageLink {
     }
 }
 
-pub(crate) fn category(content_type: &str) -> &'static str {
+/// 依据文件后缀优先归类，缺失或未知后缀时回落到 Content-Type。
+///
+/// 浏览器对 `.apk`、`.sql`、`.db` 等后缀常常上报通用 MIME
+/// （如 `application/octet-stream`、`application/x-www-form-urlencoded`），
+/// 只按 MIME 会全部落到「其他」，因此这里以文件名后缀为主判据。
+pub(crate) fn file_category(file: &FileItem) -> &'static str {
+    category_of(&file.name, &file.content_type)
+}
+
+/// 后缀与 MIME 的分类入口，便于单测覆盖；后缀大小写不敏感。
+fn category_of(name: &str, content_type: &str) -> &'static str {
+    if let Some(kind) = extension_kind(&extension(name)) {
+        return kind;
+    }
+    content_type_kind(&content_type.to_ascii_lowercase())
+}
+
+/// 取最后一个 `.` 之后的小写后缀；无后缀或后缀超长时返回空串。
+fn extension(name: &str) -> String {
+    let Some((_, suffix)) = name.rsplit_once('.') else {
+        return String::new();
+    };
+    if suffix.is_empty() || suffix.len() > 12 || !suffix.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return String::new();
+    }
+    suffix.to_ascii_lowercase()
+}
+
+fn extension_kind(extension: &str) -> Option<&'static str> {
+    let kind = match extension {
+        "" => return None,
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "ico" | "heic" | "heif"
+        | "avif" | "tif" | "tiff" => "image",
+        "mp3" | "wav" | "flac" | "aac" | "ogg" | "oga" | "m4a" | "wma" | "opus" | "mp4" | "mkv"
+        | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg" | "3gp" => "media",
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp"
+        | "txt" | "rtf" | "md" | "csv" | "epub" | "mobi" => "document",
+        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "zst" | "tgz" | "tbz" | "txz"
+        | "lz4" | "cab" | "iso" => "archive",
+        "apk" | "aab" | "exe" | "msi" | "dmg" | "pkg" | "deb" | "rpm" | "appimage" | "ipa"
+        | "jar" | "war" => "application",
+        "rs" | "kt" | "kts" | "java" | "scala" | "groovy" | "py" | "rb" | "php" | "go" | "js"
+        | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "c" | "cc" | "cpp" | "h" | "hpp" | "cs"
+        | "swift" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" | "html" | "htm"
+        | "css" | "scss" | "sass" | "less" | "vue" | "svelte" | "json" | "json5" | "yaml"
+        | "yml" | "toml" | "xml" | "ini" | "cfg" | "conf" | "env" | "properties" | "gradle"
+        | "lock" => "code",
+        "db" | "sqlite" | "sqlite3" | "sql" | "mdb" | "accdb" | "dump" | "bak" | "bkp" => {
+            "database"
+        }
+        _ => return None,
+    };
+    Some(kind)
+}
+
+pub(crate) fn content_type_kind(content_type: &str) -> &'static str {
     if content_type.starts_with("image/") {
         "image"
     } else if content_type.starts_with("audio/") || content_type.starts_with("video/") {
@@ -48,6 +104,30 @@ pub(crate) fn category(content_type: &str) -> &'static str {
         || content_type.contains("msword")
     {
         "document"
+    } else if content_type.contains("zip")
+        || content_type.contains("tar")
+        || content_type.contains("compressed")
+        || content_type.contains("x-7z")
+        || content_type.contains("x-rar")
+    {
+        "archive"
+    } else if content_type.contains("android.package-archive")
+        || content_type.contains("x-msdownload")
+        || content_type.contains("x-msi")
+        || content_type.contains("x-deb")
+        || content_type.contains("x-rpm")
+        || content_type.contains("x-apple-diskimage")
+    {
+        "application"
+    } else if content_type.contains("sql") || content_type.contains("sqlite") {
+        "database"
+    } else if content_type.contains("json")
+        || content_type.contains("xml")
+        || content_type.contains("yaml")
+        || content_type.contains("javascript")
+        || content_type.contains("ecmascript")
+    {
+        "code"
     } else {
         "other"
     }
@@ -57,14 +137,64 @@ pub(crate) fn category(content_type: &str) -> &'static str {
 mod tests {
     use super::*;
     #[test]
-    fn sizes_and_categories_are_readable() {
+    fn sizes_are_readable() {
         assert_eq!(format_bytes(7), "7 B");
         assert_eq!(format_bytes(1536), "1.5 KiB");
         assert_eq!(format_bytes(10 * 1024 * 1024), "10.0 MiB");
-        assert_eq!(category("image/png"), "image");
-        assert_eq!(category("application/pdf"), "document");
-        assert_eq!(category("video/mp4"), "media");
-        assert_eq!(category("application/octet-stream"), "other");
+    }
+
+    #[test]
+    fn classifies_by_extension_before_content_type() {
+        // 后缀优先：浏览器对 apk/sql 常上报通用 MIME，仍应按后缀归类。
+        assert_eq!(
+            category_of("app.apk", "application/x-www-form-urlencoded"),
+            "application"
+        );
+        assert_eq!(
+            category_of("dump.sql", "application/octet-stream"),
+            "database"
+        );
+        assert_eq!(
+            category_of("data.db", "application/octet-stream"),
+            "database"
+        );
+        assert_eq!(
+            category_of("bundle.zip", "application/octet-stream"),
+            "archive"
+        );
+        assert_eq!(category_of("Main.kt", "application/octet-stream"), "code");
+        assert_eq!(
+            category_of("config.json", "application/octet-stream"),
+            "code"
+        );
+        // 后缀大小写不敏感。
+        assert_eq!(
+            category_of("PHOTO.PNG", "application/octet-stream"),
+            "image"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_content_type_without_known_extension() {
+        assert_eq!(category_of("report", "image/png"), "image");
+        assert_eq!(category_of("report", "application/pdf"), "document");
+        assert_eq!(category_of("clip", "video/mp4"), "media");
+        assert_eq!(category_of("bundle", "application/zip"), "archive");
+        assert_eq!(
+            category_of("payload", "application/vnd.android.package-archive"),
+            "application"
+        );
+        assert_eq!(category_of("model", "application/sql"), "database");
+        assert_eq!(
+            category_of("payload.bin", "application/octet-stream"),
+            "other"
+        );
+    }
+
+    #[test]
+    fn content_type_fallback_is_case_insensitive() {
+        assert_eq!(category_of("report", "IMAGE/PNG"), "image");
+        assert_eq!(category_of("clip", "Video/MP4"), "media");
     }
 
     #[test]
