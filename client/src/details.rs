@@ -68,7 +68,7 @@ fn ImageLinkField(
     let clipboard_value = value.clone();
     rsx! {
         label { class: "admin-field",
-            span { "{label}" }
+            span { {label} }
             div { class: "admin-actions",
                 Input {
                     aria_label: field_label,
