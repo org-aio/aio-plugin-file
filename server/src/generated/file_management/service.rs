@@ -4,7 +4,7 @@ use anyhow::Result;
 use super::model::{DownloadObject, FileQuery, ImageQuery, UploadCommand};
 
 #[async_trait::async_trait]
-pub trait FileService: Send + Sync {
+pub trait FileService: std::any::Any + Send + Sync {
     async fn initialize(&self) -> Result<()>;
     async fn list(&self, tenant_id: &str) -> Result<Vec<FileItem>>;
     async fn upload(&self, command: UploadCommand) -> Result<FileItem>;

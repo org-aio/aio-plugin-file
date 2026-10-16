@@ -61,13 +61,18 @@ const STORED_COLUMNS: &str = r#"tenant_id, id, original_name, content_type, size
                       image_token, storage_name"#;
 
 #[derive(Debug)]
-pub(super) struct FileServiceImpl {
+pub struct FileServiceImpl {
     pool: PgPool,
     config: FileStorageConfig,
     initialized: OnceCell<()>,
 }
 
 impl FileServiceImpl {
+    /// 关闭本代连接池；文件与元数据保留，重新启用时必须创建新的服务实例。
+    pub async fn shutdown(&self) {
+        self.pool.close().await;
+    }
+
     pub fn from_env() -> Result<Self> {
         let database_url = env::var("AIO_DATABASE_URL")
             .or_else(|_| env::var("AZ_AIO_DATABASE_URL"))

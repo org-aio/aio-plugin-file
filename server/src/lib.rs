@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result};
 use axum::Router;
 use dill::CatalogBuilder;
 
-pub use generated::file_management::FileService;
+pub use generated::file_management::{FileController, FileService, FileServiceImpl};
 
 pub fn register(builder: &mut CatalogBuilder) -> Result<()> {
     generated::file_management::register(builder)

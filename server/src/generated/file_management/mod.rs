@@ -6,6 +6,7 @@ mod util;
 
 pub use controller::FileController;
 pub use service::FileService;
+pub use service_impl::FileServiceImpl;
 
 use anyhow::Result;
 use dill::CatalogBuilder;
