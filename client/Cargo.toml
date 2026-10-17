@@ -7,18 +7,18 @@ rust-version.workspace = true
 
 [dependencies]
 aio-plugin-file-model = { path = "../model" }
-az-dioxus-admin-shell = { git = "https://github.com/zjarlin/dioxus-admin-workbench.git", rev = "f5a10a65526f4e2aae8de10c36607472716ddeba" }
-az-ui-components = { git = "https://github.com/zjarlin/dioxus-admin-workbench.git", rev = "f5a10a65526f4e2aae8de10c36607472716ddeba" }
-dill = "0.15.0"
-dioxus = { version = "=0.7.9", default-features = false, features = ["macro", "html", "signals"] }
+az-ui-components = { git = "https://github.com/zjarlin/dioxus-admin-workbench.git", rev = "071324ed60909f755f19120dcfe3346c73f0ab5d" }
+dioxus = { version = "=0.7.9", default-features = false, features = ["macro", "html", "signals", "hooks", "document", "web", "launch"] }
 dioxus-icons = { version = "0.1.0", default-features = false }
-futures-channel = "0.3.34"
-gloo-net = { version = "0.6.0", features = ["http", "json"] }
 js-sys = "0.3.77"
+wasm-bindgen-futures = "0.4.51"
+serde-wasm-bindgen = "0.6.5"
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+url = "2.5.7"
 serde = "1.0.228"
 serde_json = "1.0.145"
 wasm-bindgen = "0.2.128"
-web-sys = { version = "0.3.77", features = ["Blob", "File", "Location", "ProgressEvent", "Window", "XmlHttpRequest", "XmlHttpRequestUpload"] }
+web-sys = { version = "0.3.77", features = ["Blob", "File", "Location", "Window"] }
 
 [lints]
 workspace = true

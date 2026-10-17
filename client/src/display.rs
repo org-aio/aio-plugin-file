@@ -16,23 +16,33 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 /// 判断文件是否已生成图床公开地址。
 pub(crate) fn image_link(file: &FileItem) -> Option<ImageLink> {
     let token = file.image_token.as_deref()?;
+    let path = file.public_path.as_deref()?;
     let origin = web_sys::window()
         .and_then(|window| window.location().origin().ok())
         .filter(|origin| origin != "null")
         .unwrap_or_default();
-    Some(image_link_for(token, &file.name, &origin))
+    Some(image_link_for(token, path, &file.name, &origin))
 }
 
 /// 依据令牌、文件名和站点来源拼装图床链接，便于单测覆盖。
-fn image_link_for(token: &str, name: &str, origin: &str) -> ImageLink {
-    let path = format!("/i/{token}");
+fn image_link_for(token: &str, path: &str, name: &str, origin: &str) -> ImageLink {
+    let path = path.to_owned();
     let url = format!("{origin}{path}");
+    let html_name = name
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let markdown_name = name
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]");
     ImageLink {
         token: token.to_owned(),
         path,
         url: url.clone(),
-        markdown: format!("![{name}]({url})"),
-        html: format!("<img src=\"{url}\" alt=\"{name}\">"),
+        markdown: format!("![{markdown_name}]({url})"),
+        html: format!("<img src=\"{url}\" alt=\"{html_name}\">"),
         bbcode: format!("[img]{url}[/img]"),
     }
 }
@@ -200,9 +210,22 @@ mod tests {
     #[test]
     fn image_link_builds_public_embed_forms() {
         let token = "a".repeat(64);
-        let link = image_link_for(&token, "封面.png", "https://aio.addzero.site");
-        assert_eq!(link.path, format!("/i/{token}"));
-        assert_eq!(link.url, format!("https://aio.addzero.site/i/{token}"));
+        let link = image_link_for(
+            &token,
+            &format!("/api/runtime/components/public/source/tenant/i/{token}"),
+            "封面.png",
+            "https://aio.example.test",
+        );
+        assert_eq!(
+            link.path,
+            format!("/api/runtime/components/public/source/tenant/i/{token}")
+        );
+        assert_eq!(
+            link.url,
+            format!(
+                "https://aio.example.test/api/runtime/components/public/source/tenant/i/{token}"
+            )
+        );
         assert_eq!(link.markdown, format!("![封面.png]({})", link.url));
         assert_eq!(
             link.html,

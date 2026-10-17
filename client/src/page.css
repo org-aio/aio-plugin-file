@@ -606,3 +606,10 @@
     transition: none;
   }
 }
+
+/* 图床字段是弹窗内容而不是可滚动表格，禁止共享 section 规则压缩最后一个字段。 */
+.file-browser__image-links,
+.file-browser__image-links > .admin-field {
+  flex: 0 0 auto;
+  min-height: auto;
+}

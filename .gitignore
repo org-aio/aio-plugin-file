@@ -3,3 +3,10 @@
 /.vscode
 *.iml
 
+
+/dist/
+/.local*/
+/test-results/
+/node_modules/
+__pycache__/
+core.*

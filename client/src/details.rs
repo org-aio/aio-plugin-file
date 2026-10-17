@@ -34,7 +34,10 @@ pub(crate) fn FileDetails(file: FileItem, on_close: Callback<()>) -> Element {
             if let Some(message) = error() { StatusMessage { error: true, message } }
             footer { class: "admin-form-footer",
                 Button { variant: ButtonVariant::Outline, onclick: move |_| on_close.call(()), "关闭" }
-                Button { onclick: move |_| { if let Err(message) = http::download(&file.id) { error.set(Some(message)); } }, Download {} "下载文件" }
+                Button { onclick: move |_| { match http::download(&file.id, &file.name) {
+                    Ok(pending) => { spawn(async move { if let Err(message) = http::acknowledged(pending).await { error.set(Some(message)); } }); }
+                    Err(message) => error.set(Some(message)),
+                } }, Download {} "下载文件" }
             }
         }
     }
@@ -47,7 +50,7 @@ fn ImageLinkSection(
     error: Signal<Option<String>>,
 ) -> Element {
     rsx! {
-        section { class: "admin-section", h2 { "图床链接" }
+        section { class: "admin-section file-browser__image-links", h2 { "图床链接" }
             p { class: "admin-meta", "公开图片地址，可粘贴到站外 Markdown、HTML 或论坛。" }
             ImageLinkField { label: "图片地址", value: link.url.clone(), copied, error }
             ImageLinkField { label: "Markdown", value: link.markdown.clone(), copied, error }

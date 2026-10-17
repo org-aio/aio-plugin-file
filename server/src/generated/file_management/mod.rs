@@ -1,20 +1,15 @@
+mod cleanup;
 mod controller;
+pub mod migration;
 mod model;
 mod service;
 mod service_impl;
+mod streaming;
+mod uploads;
 mod util;
 
 pub use controller::FileController;
+pub use model::{DownloadObject, FileQuery, ImageQuery};
 pub use service::FileService;
 pub use service_impl::FileServiceImpl;
-
-use anyhow::Result;
-use dill::CatalogBuilder;
-
-pub fn register(builder: &mut CatalogBuilder) -> Result<()> {
-    builder
-        .add_value(service_impl::FileServiceImpl::from_env()?)
-        .bind::<dyn FileService, service_impl::FileServiceImpl>()
-        .add::<FileController>();
-    Ok(())
-}
+pub use util::PUBLIC_IMAGE_TYPES;

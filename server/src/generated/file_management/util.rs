@@ -1,55 +1,38 @@
-use std::{env, path::PathBuf};
-
-use aio_plugin_file_model::DEFAULT_MAX_FILE_BYTES;
-use anyhow::{Context as _, Result, bail};
+use anyhow::Result;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-const MAX_CONFIGURED_FILE_BYTES: u64 = 100 * 1024 * 1024;
+/// 公开类型与整包声明一致；SVG 由宿主无脚本 CSP 限制。
+pub const PUBLIC_IMAGE_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/svg+xml",
+    "image/avif",
+    "image/bmp",
+    "image/tiff",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+    "image/heic",
+    "image/heif",
+    "image/jxl",
+];
 
 #[derive(Debug, Error)]
 pub enum FileDomainError {
     #[error("{0}")]
     Validation(String),
+    #[error("文件或上传不存在")]
+    NotFound,
+    #[error("{0}")]
+    Conflict(String),
 }
 
-#[derive(Debug)]
-pub(super) struct FileStorageConfig {
-    pub root: PathBuf,
-    pub max_bytes: usize,
-}
-
-impl FileStorageConfig {
-    pub fn from_env() -> Result<Self> {
-        let root = env::var_os("AIO_FILE_STORAGE_DIR")
-            .map(PathBuf::from)
-            .context("文件插件缺少 AIO_FILE_STORAGE_DIR")?;
-        if !root.is_absolute() {
-            bail!("AIO_FILE_STORAGE_DIR 必须是绝对路径");
-        }
-        let max_bytes = env::var("AIO_FILE_MAX_BYTES")
-            .ok()
-            .map(|value| {
-                value
-                    .parse::<u64>()
-                    .context("AIO_FILE_MAX_BYTES 必须是正整数")
-            })
-            .transpose()?
-            .unwrap_or(DEFAULT_MAX_FILE_BYTES);
-        if max_bytes == 0 || max_bytes > MAX_CONFIGURED_FILE_BYTES {
-            bail!("AIO_FILE_MAX_BYTES 必须介于 1 与 {MAX_CONFIGURED_FILE_BYTES} 之间");
-        }
-        Ok(Self {
-            root,
-            max_bytes: usize::try_from(max_bytes).context("文件大小限制超出当前平台范围")?,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn for_test(root: PathBuf, max_bytes: usize) -> Self {
-        Self { root, max_bytes }
-    }
+/// 对象键不含用户文件名，且一个上传的每个索引只允许一种内容摘要。
+pub(super) fn chunk_key(id: &str, index: u32) -> String {
+    format!("files/{id}/{index}")
 }
 
 pub(super) fn validate_filename(value: &str) -> Result<String> {
@@ -106,13 +89,7 @@ pub(super) fn validate_image_token(value: &str) -> Result<String> {
 }
 
 pub(super) fn is_image_content_type(content_type: &str) -> bool {
-    content_type.starts_with("image/")
-}
-
-pub(super) fn storage_name(file_id: &str) -> Result<String> {
-    let id = Uuid::parse_str(file_id)
-        .map_err(|_| FileDomainError::Validation("文件 ID 无效".to_owned()))?;
-    Ok(format!("{id}.blob"))
+    PUBLIC_IMAGE_TYPES.contains(&content_type)
 }
 
 pub(super) fn content_disposition(filename: &str) -> String {
@@ -167,7 +144,10 @@ mod tests {
         assert!(validate_filename("../secret").is_err());
         assert!(validate_filename("folder/file.txt").is_err());
         assert!(validate_filename("bad\0name").is_err());
-        assert_eq!(validate_filename(" 报告.pdf ").unwrap(), "报告.pdf");
+        assert_eq!(
+            validate_filename(" 报告.pdf ").ok().as_deref(),
+            Some("报告.pdf")
+        );
     }
 
     #[test]
@@ -191,8 +171,8 @@ mod tests {
         assert!(validate_content_type("text/plain\r\nx-test: yes").is_err());
         assert!(validate_content_type("not-a-media-type").is_err());
         assert_eq!(
-            validate_content_type("").unwrap(),
-            "application/octet-stream"
+            validate_content_type("").ok().as_deref(),
+            Some("application/octet-stream")
         );
     }
 
@@ -208,10 +188,15 @@ mod tests {
     fn validates_public_image_tokens() {
         let token = new_image_token();
         assert_eq!(token.len(), 64);
-        assert_eq!(validate_image_token(&token).unwrap(), token);
         assert_eq!(
-            validate_image_token(&token.to_ascii_uppercase()).unwrap(),
-            token
+            validate_image_token(&token).ok().as_deref(),
+            Some(token.as_str())
+        );
+        assert_eq!(
+            validate_image_token(&token.to_ascii_uppercase())
+                .ok()
+                .as_deref(),
+            Some(token.as_str())
         );
         assert!(validate_image_token("short").is_err());
         assert!(validate_image_token(&"z".repeat(64)).is_err());

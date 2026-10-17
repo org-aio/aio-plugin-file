@@ -1,55 +1,39 @@
-# AIO 文件管理插件 / AIO File Management Plugin
+# AIO 文件管理插件
 
-文件管理作为独立 Git 插件接入 AIO IDEA 的“系统”场景，在“基础设施 → 文件管理”树节点下贡献“文件列表”页面。一个仓库内同时保存 Dioxus 客户端、Rust 服务端和共享模型。
+文件管理以 v2 Sidecar 整包交付，包含 Rust 服务、Dioxus 页面和 SQL 迁移。安装后动态贡献“系统 → 基础设施 → 文件管理 → 文件列表”，升级、回滚或停用均不要求重编宿主。正式数据使用插件独立 PostgreSQL schema 和运行时对象存储；没有宿主本地文件目录或全局数据库连接的备用实现。
 
-File management plugs into the “系统” (System) scenario of AIO IDEA as an independent Git plugin, contributing the “文件列表” (File List) page under the “基础设施 → 文件管理” (Infrastructure → File Management) tree node. One repository holds the Dioxus client, Rust server and shared models together.
+页面与业务 API 要求租户内的 `file:manage` 权限。安装不会授予该权限；身份、挂载、版本和撤权由宿主校验。匿名图床只开放整包声明的图片 GET/HEAD 路由，不开放列表或修改。
 
-## 存储边界 / Storage Boundaries
+## 文件与图床
 
-- PostgreSQL 表 `file_objects` 是文件元数据的正式持久化源。
-- 文件内容写入宿主配置的 `AIO_FILE_STORAGE_DIR`；目录中只使用租户摘要和随机对象 ID，不使用用户提交的文件名。
-- 每次列表、下载和删除都使用登录会话中的 `tenant_id` 过滤；请求不能传入租户 ID。
-- `AIO_FILE_MAX_BYTES` 控制单文件上限，默认 10 MiB。
-- 文件上传先写同目录临时文件并同步，再原子切换；数据库保存失败时清理内容文件。
-- 删除先把内容移入同租户隔离的回收文件，再提交元数据事务；事务失败会恢复内容。
-- 图片上传时额外生成 64 位十六进制随机 `image_token`，通过公开地址 `/i/{token}` 访问；令牌不包含文件 ID、租户或文件名，删除文件后立即失效。
-- 图床地址以 `inline` 返回并按令牌长期缓存，非图片文件不生成令牌、不进入公开地址空间。
+- 单文件最多 **100 MiB**，按 4 MiB 分块传输；普通文件、图片和空文件均可上传。
+- 上传会话与分块摘要持久化，重试必须携带相同内容。全部分块验证通过后才进入文件列表，完成操作幂等。
+- 页面最多重试同一分块三次；取消在当前有界请求结束后生效，停止后续分块并撤销会话。关闭页面造成的孤立上传 24 小时后过期。
+- 私有下载与公开图片逐块读取，检查大小和摘要，不通过 iframe 消息缓存整个文件。下载按钮由宿主发起浏览器下载。
+- 删除立即隐藏文件与图片，再通过持久化墓碑清理对象；60 秒宽限避免迟到写入留下孤立对象。失败保留状态，重启后重试。
+- 图床地址包含插件来源、租户及随机 token：`/api/runtime/components/public/{source}/{tenant}/i/{token}`。普通文件没有公开地址；公开资源不缓存，删除或停用立即影响后续访问。
+- 包回滚只恢复代码和前端，不回滚业务数据。
 
-- The PostgreSQL table `file_objects` is the authoritative persistence source for file metadata.
-- File contents are written to the host-configured `AIO_FILE_STORAGE_DIR`; the directory uses only tenant hashes and random object IDs, never user-supplied filenames.
-- Every list, download and delete is filtered by the `tenant_id` in the login session; requests cannot pass a tenant ID.
-- `AIO_FILE_MAX_BYTES` caps the per-file size, defaulting to 10 MiB.
-- Uploads first write a temp file in the same directory and sync it, then switch atomically; a failed database save cleans up the content file.
-- Deletion first moves content into a tenant-isolated recycle file, then commits the metadata transaction; a failed transaction restores the content.
-- Image uploads also mint a 64-hex random `image_token` reachable at the public path `/i/{token}`; the token leaks no file ID, tenant, or filename and stops working once the file is deleted.
-- Public image responses use `inline` disposition and long-lived token-scoped caching; non-image files never receive a token and never enter the public address space.
+## 业务路由
 
-## API
+以下路径通过宿主挂载和可信入口调用，不是站点根路径。
 
-| 方法 / Method | 路径 / Path | 说明 / Description |
+| 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/files` | 当前租户文件列表 / File list of the current tenant |
-| `POST` | `/api/files?filename=<name>` | 上传原始请求体 / Upload the raw request body |
-| `GET` | `/api/files/{id}` | 下载当前租户文件 / Download a file of the current tenant |
-| `DELETE` | `/api/files/{id}` | 删除当前租户文件 / Delete a file of the current tenant |
-| `GET` | `/api/plugins/file/health` | 初始化存储并返回健康状态 / Initialize storage and return health |
-| `GET` | `/i/{token}` | 公开图床地址（仅图片，无需会话）/ Public image host address (images only, no session) |
+| GET | `/files` | 当前租户文件及容量限制 |
+| GET / DELETE | `/files/{id}` | 私有流式下载 / 删除 |
+| POST | `/uploads` | 声明名称、MIME 和字节数，创建会话 |
+| GET / DELETE | `/uploads/{id}` | 当前用户的分块进度 / 取消 |
+| PUT | `/uploads/{id}/chunks/{index}` | 上传固定大小的原始分块 |
+| POST | `/uploads/{id}/complete` | 验证完整内容并提交 |
+| GET / HEAD | `/i/{token}` | 经宿主公开入口读取图片 |
 
-页面与 API 均要求专用的 `file:manage` 权限，文件能力不与 RBAC 管理权限耦合。
-`/i/{token}` 是唯一无需会话的文件路径，只接受图片上传时生成的随机令牌；列表、上传、下载和删除仍按租户隔离。
+`/health` 和 `/aio/describe` 只用于宿主健康检查和动态页面发现。旧 `/api/files`、站点根 `/i/{token}` 和旧静态注册接口不保留别名。旧链接迁移输出映射，见迁移说明。
 
-Both the page and the API require the dedicated `file:manage` permission; file capabilities are not coupled to RBAC admin permissions.
-`/i/{token}` is the only session-free file path. It accepts only the random token minted for an image upload; listing, upload, download and delete stay tenant-isolated.
+## 构建与验收
 
-## 验证 / Verification
+使用仓库固定的 Rust nightly、Dioxus CLI 0.7.9 和 Node。执行 `sh scripts/build.sh --process` 生成 `dist/file-server`、`dist/frontend` 及部署者工具 `dist/file-migrate`；进程构建还需 cargo-zigbuild 和 Zig。整包只包含运行时服务、前端及迁移 SQL；`file-migrate` 是单独保存和校验的部署工具，不能放入公开前端目录。
 
-```bash
-cargo fmt --all --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+以当前平台的 `aio plugin validate` / `aio plugin package` 校验和打包；宿主须支持 Sidecar 对象 broker、公开资源流和按插件限定的公开图片预览。安装包需先在隔离环境验收，源码 push 不代表已部署。
 
-# 使用独立测试 PostgreSQL 运行真实持久化与租户隔离测试
-# Run real persistence and tenant-isolation tests against a dedicated test PostgreSQL
-AIO_TEST_DATABASE_URL=postgresql://... \
-  cargo test -p aio-plugin-file-server persists_content_and_isolates_tenants -- --ignored
-```
+建议阅读顺序：`server/src/hosting.rs` 的资源与路由装配 → `server/src/generated/file_management/` 的上传、读取、删除和迁移 → `client/src/http.rs` 的宿主 SDK 与 `client/src/page.rs` 的页面。测试、迁移和实际产品验收见 [tests/README.md](tests/README.md)。

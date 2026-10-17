@@ -1,0 +1,10 @@
+{
+  "name": "aio-plugin-file-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "node tests/browser/files.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.0"
+  }
+}

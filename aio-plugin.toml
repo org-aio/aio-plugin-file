@@ -1,11 +1,32 @@
-[plugin.client]
-path = "client"
+schema_version = 2
 
-[plugin.server]
-path = "server"
+[plugin]
+required_permissions = ["file:manage"]
 
 [plugin.marketplace]
 title = "文件管理"
-summary = "按租户隔离的文件上传、列表、下载、安全删除与图片图床外链。"
+summary = "独立交付的文件管理与图床，支持 100 MiB 分块上传、下载和可恢复清理。"
 license = "MIT"
 tags = ["system", "files", "storage", "image-host"]
+
+[plugin.runtime]
+artifact = "dist/file-server"
+host_version = ">=2026.10.17"
+
+[plugin.runtime.process]
+image = "sha256:48a661b5e5f4560287dfc254e948825538d0f7a1379616495a424ed375afd31f"
+
+[plugin.frontend]
+path = "dist/frontend"
+
+[plugin.database]
+migrations = "server/migrations"
+
+[plugin.capabilities]
+database = true
+storage = true
+
+[[plugin.public_routes]]
+path = "/i/{token}"
+content_types = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml", "image/avif", "image/bmp", "image/tiff", "image/x-icon", "image/vnd.microsoft.icon", "image/heic", "image/heif", "image/jxl"]
+max_bytes = 104857600

@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 
+use crate::view_state::UrlUpdate;
 use crate::{
     clipboard,
     details::FileDetails,
     display::{file_category, format_bytes, image_link},
     http,
-    upload_dialog::UploadFileDialog,
+    upload_dialog::{UploadFileDialog, upload_dropped_files},
     view_state::{FileCategory, SortMode, use_file_view_state},
 };
 use aio_plugin_file_model::FileItem;
-use az_dioxus_admin_shell::UrlUpdate;
 use az_ui_components::{
     admin::{
         AsyncResult, DeleteRecordsDialog, PageHeader, PageSurface, RequestState, StatusMessage,
@@ -21,7 +21,7 @@ use az_ui_components::{
     select::{Select, SelectItem},
 };
 use dioxus::html::HasFileData as _;
-use dioxus::prelude::{dioxus_elements::FileData, *};
+use dioxus::prelude::*;
 use dioxus_icons::lucide::{
     Archive, Copy, Database, Download, File, FileCode, FileImage, FileText, Files, Film, Folder,
     HardDrive, Image, Info, Package, RefreshCw, Search, Trash2, Upload,
@@ -45,6 +45,7 @@ pub fn FileManagementPage() -> Element {
     let mut uploading = use_signal(|| false);
     let mut drag_active = use_signal(|| false);
     let drag_uploading = use_signal(|| None::<String>);
+    let mut cancel_upload = use_signal(|| false);
     let mut status = use_signal(|| None::<Result<String, String>>);
     let mut selected_ids = use_signal(BTreeSet::<String>::new);
     let mut active_file = use_signal(|| None::<FileItem>);
@@ -54,6 +55,11 @@ pub fn FileManagementPage() -> Element {
     let url = view.url;
     let selected_category = view.category;
     let search = view.search;
+    let mut search_draft = use_signal(|| search.clone());
+    let committed_search = search.clone();
+    use_effect(use_reactive((&committed_search,), move |(value,)| {
+        search_draft.set(value)
+    }));
     let sort_mode = view.sort;
 
     let result = files.read().as_ref().cloned();
@@ -98,6 +104,10 @@ pub fn FileManagementPage() -> Element {
                     "上传文件"
                 }
             }
+            if drag_uploading().is_some() {
+                Button { variant: ButtonVariant::Outline, disabled: cancel_upload(), onclick: move |_| cancel_upload.set(true), if cancel_upload() { "正在取消上传" } else { "取消上传" } }
+            }
+            if let Some(message) = (url.error)() { StatusMessage { error: true, message } }
             if let Some(message) = status() {
                 StatusMessage { error: message.is_err(), message: message.unwrap_or_else(|message| message) }
             }
@@ -129,7 +139,8 @@ pub fn FileManagementPage() -> Element {
                                 status.set(Some(Err("没有检测到可上传的文件".to_owned())));
                                 return;
                             }
-                            upload_dropped_files(dropped, maximum, drag_uploading, status, revision);
+                            cancel_upload.set(false);
+                            upload_dropped_files(dropped, maximum, drag_uploading, status, revision, cancel_upload);
                         },
                         aside { class: "file-browser__sidebar",
                             div { class: "file-browser__panel-heading",
@@ -175,18 +186,25 @@ pub fn FileManagementPage() -> Element {
                                 );
                             },
                             header { class: "file-browser__toolbar",
-                                label { class: "file-browser__search",
+                                // 搜索与排序保留各自键盘行为，不触发文件列表的删除或详情快捷键。
+                                onkeydown: move |event: KeyboardEvent| event.stop_propagation(),
+                                form { class: "file-browser__search", onsubmit: move |event: FormEvent| {
+                                    event.prevent_default();
+                                    let value = search_draft();
+                                    url.update(&[("q", (!value.is_empty()).then_some(value))], UrlUpdate::Push);
+                                },
                                     Search {}
                                     Input {
                                         r#type: "search",
                                         aria_label: "搜索文件",
-                                        placeholder: "搜索名称或类型",
-                                        value: search.clone(),
+                                        placeholder: "名称或类型，回车搜索",
+                                        value: search_draft(),
                                         oninput: move |event: FormEvent| {
                                             let value = event.value();
-                                            url.update(&[("q", (!value.is_empty()).then_some(value))], UrlUpdate::Continuous);
+                                            search_draft.set(value);
                                         },
                                     }
+                                    Button { r#type: "submit", variant: ButtonVariant::Outline, "搜索" }
                                 }
                                 Select {
                                     aria_label: "文件排序",
@@ -260,8 +278,9 @@ pub fn FileManagementPage() -> Element {
                                 file: active_file(),
                                 on_copy: move |file: FileItem| copy_image_link(file, status),
                                 on_download: move |file: FileItem| {
-                                    if let Err(message) = http::download(&file.id) {
-                                        status.set(Some(Err(message)));
+                                    match http::download(&file.id, &file.name) {
+                                        Ok(pending) => { spawn(async move { if let Err(message) = http::acknowledged(pending).await { status.set(Some(Err(message))); } }); }
+                                        Err(message) => status.set(Some(Err(message))),
                                     }
                                 },
                                 on_details: move |file: FileItem| detail_target.set(Some(file)),
@@ -354,9 +373,11 @@ fn FileRow(
 ) -> Element {
     let file_for_open = file.clone();
     let file_id = file.id.clone();
+    let file_key = file.id.clone();
     rsx! {
         article {
             class: "file-browser__row",
+            "data-file-id": file_key,
             "data-active": active.to_string(),
             role: "option",
             aria_selected: active.to_string(),
@@ -613,52 +634,6 @@ fn copy_image_link(file: FileItem, mut status: Signal<Option<Result<String, Stri
     });
 }
 
-fn upload_dropped_files(
-    files: Vec<FileData>,
-    max_file_bytes: u64,
-    mut drag_uploading: Signal<Option<String>>,
-    mut status: Signal<Option<Result<String, String>>>,
-    mut revision: Signal<u64>,
-) {
-    spawn(async move {
-        let total = files.len();
-        let mut uploaded = 0_usize;
-        for file in files {
-            if file.size() > max_file_bytes {
-                status.set(Some(Err(format!(
-                    "{} 超过单文件上限 {}",
-                    file.name(),
-                    format_bytes(max_file_bytes)
-                ))));
-                drag_uploading.set(None);
-                return;
-            }
-            let Some(web_file) = file.inner().downcast_ref::<web_sys::File>().cloned() else {
-                status.set(Some(Err(format!("浏览器无法读取 {}", file.name()))));
-                drag_uploading.set(None);
-                return;
-            };
-            drag_uploading.set(Some(file.name()));
-            match http::upload(web_file, |_| {}).await {
-                Ok(_) => uploaded += 1,
-                Err(message) => {
-                    status.set(Some(Err(format!(
-                        "已上传 {uploaded}/{total} 个文件；{message}"
-                    ))));
-                    drag_uploading.set(None);
-                    if uploaded > 0 {
-                        revision += 1;
-                    }
-                    return;
-                }
-            }
-        }
-        drag_uploading.set(None);
-        status.set(Some(Ok(format!("已上传 {uploaded} 个文件"))));
-        revision += 1;
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,6 +646,7 @@ mod tests {
         created_at: &str,
     ) -> FileItem {
         FileItem {
+            public_path: None,
             id: id.to_owned(),
             name: name.to_owned(),
             content_type: content_type.to_owned(),
